@@ -17,6 +17,8 @@ struct AccountStatus: Identifiable {
 @MainActor
 final class MailChecker: ObservableObject {
     static let shared = MailChecker()
+    /// UserDefaults key for the Settings switch. Missing means on.
+    static let notificationsKey = "notificationsEnabled"
 
     @Published private(set) var accounts: [AccountStatus] = []
     @Published private(set) var lastChecked: Date?
@@ -155,7 +157,9 @@ final class MailChecker: ObservableObject {
     }
 
     private func notify(newUIDs: Set<UInt32>, emails: [Email], account: Account) {
-        guard !newUIDs.isEmpty else { return }
+        guard !newUIDs.isEmpty,
+              UserDefaults.standard.object(forKey: Self.notificationsKey) as? Bool ?? true
+        else { return }
         let newEmails = emails.filter { newUIDs.contains($0.uid) }
 
         let content = UNMutableNotificationContent()

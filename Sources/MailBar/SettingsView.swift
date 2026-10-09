@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @ObservedObject var checker: MailChecker
 
+    @AppStorage(MailChecker.notificationsKey) private var notificationsEnabled = true
     @State private var email = ""
     @State private var password = ""
     @State private var status: String?
@@ -11,6 +12,9 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
+            Toggle("Notify me about new mail", isOn: $notificationsEnabled)
+            Divider().padding(.vertical, 4)
+
             if !checker.accounts.isEmpty {
                 Text("Accounts").font(.headline)
                 VStack(spacing: 0) {
