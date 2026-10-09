@@ -37,6 +37,9 @@ final class MailChecker: ObservableObject {
     /// Unread UIDs per account from the last check. Missing until an account's first check,
     /// so mail that was already there doesn't trigger notifications.
     private var knownUnread: [String: Set<UInt32>] = [:]
+    /// UIDs marked as read here that Gmail may still report as unread, e.g. from a check that
+    /// started before the mark-as-read. Hidden from the menu until Gmail stops reporting them.
+    private var markedRead: [String: Set<UInt32>] = [:]
     private var recheckRequested = false
     private var timer: Timer?
 
@@ -52,6 +55,7 @@ final class MailChecker: ObservableObject {
         let emails = Account.emails
         accounts = emails.map { email in accounts.first { $0.email == email } ?? AccountStatus(email: email) }
         knownUnread = knownUnread.filter { emails.contains($0.key) }
+        markedRead = markedRead.filter { emails.contains($0.key) }
         Task { await check() }
     }
 
@@ -81,12 +85,16 @@ final class MailChecker: ObservableObject {
             var status = accounts.first { $0.email == account.email } ?? AccountStatus(email: account.email)
             switch results[account.email] {
             case .success(let result):
+                let hidden = markedRead[account.email, default: []].intersection(result.unreadUIDs)
+                markedRead[account.email] = hidden
+                let unreadUIDs = result.unreadUIDs.subtracting(hidden)
+                let emails = result.emails.filter { !hidden.contains($0.uid) }
                 if let known = knownUnread[account.email] {
-                    notify(newUIDs: result.unreadUIDs.subtracting(known), emails: result.emails, account: account)
+                    notify(newUIDs: unreadUIDs.subtracting(known), emails: emails, account: account)
                 }
                 knownUnread[account.email] = result.unreadUIDs
-                status.unreadCount = result.unreadUIDs.count
-                status.emails = result.emails
+                status.unreadCount = unreadUIDs.count
+                status.emails = emails
                 status.error = nil
             case .failure(let error):
                 status.error = error.localizedDescription
@@ -111,11 +119,12 @@ final class MailChecker: ObservableObject {
             status.emails.removeAll { $0.uid == email.uid }
             status.unreadCount = status.unreadCount.map { max($0 - 1, 0) }
         }
-        knownUnread[accountEmail]?.remove(email.uid)
+        markedRead[accountEmail, default: []].insert(email.uid)
 
         do {
             try await IMAPClient.markAsRead(account: account, uids: [email.uid])
         } catch {
+            markedRead[accountEmail]?.remove(email.uid)
             updateStatus(accountEmail) { $0.actionError = "Couldn't mark as read: \(error.localizedDescription)" }
         }
         await check() // refill the list from Gmail
@@ -128,11 +137,13 @@ final class MailChecker: ObservableObject {
             status.emails = []
             status.unreadCount = 0
         }
-        knownUnread[accountEmail] = []
+        let uids = knownUnread[accountEmail] ?? []
+        markedRead[accountEmail, default: []].formUnion(uids)
 
         do {
             _ = try await IMAPClient.markAllAsRead(account: account)
         } catch {
+            markedRead[accountEmail]?.subtract(uids)
             updateStatus(accountEmail) { $0.actionError = "Couldn't mark all as read: \(error.localizedDescription)" }
         }
         await check()
